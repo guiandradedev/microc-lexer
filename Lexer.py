@@ -169,12 +169,27 @@ class Lexer:
     def end_of_file(self, char):
         return Token(TokenKind.EOF, "", None, self.line, self.column) 
 
-    def unknown_char(self, char):
-        return LexerError(self.line, self.column, "Unknown character: " + char)
-
     def fallback(self, tokenKind):
         return Token(tokenKind, self.lexema, None, self.start_line, self.start_column)
+    
+    
+    def err_unknown_char(self, char):
+        raise LexerError(f"Unknown character: {char}", self.line, self.column)
+    
+    def err_isolated_char(self, char):
+        raise LexerError(f"Isolated character {char}", self.start_line, self.start_column)
+    
+    def err_string_newline(self, char):
+        raise LexerError(f"String literal cannot contain newline", self.line, self.column)
 
+    def err_string_eof(self, char):
+        raise LexerError(f"String not terminated", self.start_line, self.start_column)
+    
+    def err_string_escape(self, char):
+        raise LexerError(f"Invalid escape sequence: {char}", self.line, self.escape_column)
+    
+    def err_comment_eof(self, char):
+        raise LexerError("Comment not terminated", self.start_line, self.start_column)
 
     def __init__(self, source: str):
         self.source = source
@@ -204,7 +219,7 @@ class Lexer:
                 'start': {  
                     # Special chars
                     'space': ('start',      self.ignored_char),
-                    'newline': ('start',    self.ignored_char), # New line não seria \n?
+                    'newline': ('start',    self.ignored_char),
 
                     # Individual char
                     '(': ('start',      lambda c: self.one_char_transition(c, TokenKind.LEFT_PAREN)),
@@ -234,13 +249,31 @@ class Lexer:
                     'char': ('id',          self.token_start), # Validate if is char or _
                     
                     'eof': ('end',          self.end_of_file),
-                    'default': ('error',    self.unknown_char)
+                    'default': ('error',    self.err_unknown_char)
                 },
                 
                 'slash': {
-                    # '/': ('line_comment', lambda c: self.ignored_char(c, None)),
-                    # '*': ('block_comment', lambda c: self.ignored_char(c, None)),
-                    'default': ('start', lambda c: self.fallback(c, TokenKind.SLASH)) # nao consumir no fallback
+                    '/': ('line_comment',           self.ignored_char),
+                    '*': ('block_comment',          self.ignored_char),
+                    'default': ('start', lambda c:  self.fallback(TokenKind.SLASH)) # nao consumir no fallback
+                },
+                
+                # comentarios
+                'line_comment': {
+                    'newline': ('start',            self.ignored_char),
+                    'eof': ('start',                self.ignored_char),
+                    'default': ('line_comment',     self.ignored_char)
+                },
+                'block_comment': {
+                    '*': ('block_comment_star',     self.ignored_char),
+                    'eof': ('error',                self.err_comment_eof),
+                    'default': ('block_comment',    self.ignored_char)
+                },
+                'block_comment_star': {
+                    '/': ('start',                  self.ignored_char),
+                    '*': ('block_comment_star',     self.ignored_char),
+                    'eof': ('error',                self.err_comment_eof),
+                    'default': ('block_comment',    self.ignored_char)
                 },
                 
                 # Operadores compostos (maior prefixo)
@@ -258,15 +291,15 @@ class Lexer:
                 },
                 'not': {
                     '=': ('start',      lambda c: self.double_char_transition(c, TokenKind.NOT_EQUAL)),
-                    'default': ('start',lambda c: self.fallback(TokenKind.NOT))
+                    'default': ('start',lambda c: self.fallback(TokenKind.LOGICAL_NOT))
                 },
                 'or': {
                     '|': ('start',      lambda c: self.double_char_transition(c, TokenKind.LOGICAL_OR)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'default': ('error',          self.err_isolated_char)
                 },
                 'and': {
                     '&': ('start',      lambda c: self.double_char_transition(c, TokenKind.LOGICAL_AND)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'default': ('error',          self.err_isolated_char)
                 },
                 
                 
@@ -284,8 +317,8 @@ class Lexer:
                 'string': {
                     '"': ('start',              self.define_string),
                     '\\': ('string_escape',     self.start_string_escape),
-                    'newline': ('error',        self.unknown_char),
-                    'eof': ('error',            self.unknown_char),
+                    'newline': ('error',        self.err_string_newline),
+                    'eof': ('error',            self.err_string_eof),
                     'default': ('string',       self.accumulate_both)
                 },
                 'string_escape': {
@@ -293,10 +326,11 @@ class Lexer:
                     't': ('string',             lambda c: self.escape_char(c, '\t')),
                     '"': ('string',             lambda c: self.escape_char(c, '"')),
                     '\\': ('string',            lambda c: self.escape_char(c, '\\')),
-                    'eof': ('error',            self.unknown_char),
-                    'default': ('error',        self.unknown_char)
+                    'eof': ('error',            self.err_string_escape),
+                    'default': ('error',        self.err_string_escape)
                 },
             }
+        
 
     def peek(self) -> str:
         """Retorna caractere sem consumi-lo, ou None se EOF."""
@@ -370,25 +404,33 @@ class Lexer:
         tokens = []
         
         while self.state != 'end':
+            
             char = self.peek()
             
             if char != '\0' and ord(char) > 127:
                 raise LexerError("Caractere nao ascii", self.line, self.column)
             
             c_class = self.char_class(char)
+            
+            
             state_transition = self.transitions_table[self.state]
             
-            if c_class in state_transition:
+            if char in state_transition:
+                next_state, action = state_transition[char]
+            elif c_class in state_transition:
                 next_state, action = state_transition[c_class]
             elif 'default' in state_transition:
                 next_state, action = state_transition['default']
             else:
                 raise LexerError("Transição não encontrada", self.line, self.column)
             
+            
+            
             token = action(char)
             self.state = next_state
             
+            
             if token:
                 tokens.append(token)
-                
+
         return tokens

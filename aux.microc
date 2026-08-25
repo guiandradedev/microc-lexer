@@ -4,5 +4,7 @@ int main() {
 
     print("Hello, World!");
 
+    // teste de comentario
+
     return 0;
 }
