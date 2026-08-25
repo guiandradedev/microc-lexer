@@ -78,88 +78,133 @@ class LexerError(Exception):
 class Lexer:
     """Converte texto-fonte MicroC em uma sequência de tokens."""
 
-    # transition_table = {
-    #     "estado": {
-    #         "caractere": {
-    #             "next_state": "novo_estado",
-    #         }
-    #     },
-    #     "novo_estado": {
-    #         "caractere": {
-    #             "next_state": "novo_estado",
-    #             "token": TokenKind.IDENTIFIER  # Se existir atributo token, é final; caso contrário é intermediario
-    #         }
-    #     }
-    # }
-
-    keyworlds = {
-        'int': TokenKind.KW_INT,
-        'true': TokenKind.KW_TRUE,
-        'false': TokenKind.KW_FALSE,
-    }
-    
-    # single_char = {
-    #     '+': TokenKind.PLUS,
-    #     '-': TokenKind.MINUS,
-    #     '*': TokenKind.STAR,
-    #     '/': TokenKind.SLASH,
-    #     '%': TokenKind.PERCENT,
-    #     '(': TokenKind.LEFT_PAREN,
-    #     ')': TokenKind.RIGHT_PAREN,
-    #     '{': TokenKind.LEFT_BRACE,
-    #     '}': TokenKind.RIGHT_BRACE,
-    #     ',': TokenKind.COMMA,
-    #     ';': TokenKind.SEMICOLON
-    # }
+    """ transition_table = {
+        "estado": {
+            "caractere": {
+                "next_state": "novo_estado",
+            }
+        },
+        "novo_estado": {
+            "caractere": {
+                "next_state": "novo_estado",
+                "token": TokenKind.IDENTIFIER  # Se existir atributo token, é final; caso contrário é intermediario
+            }
+        }
+    } """
     
     
 
-    def ignored_char(self, char, tokenKind):
-        pass
+    def ignored_char(self, char):
+        if char != '\0':
+            self.advance()
+            return None
+    
+    def token_start(self, char):
+        self.start_line, self.start_column = self.line, self.column
+        self.lexema = char
+        self.advance()
+        return None
+        
+    def start_string(self, char):
+        self.start_line, self.start_column = self.line, self.column
+        self.lexema, self.string_value = char, ""
+        self.advance()
+        return None
+    
+    def start_string_escape(self, char):
+        self.escape_column = self.column
+        self.lexema += char
+        self.advance()
+        return None
+    
+    def escape_char(self, char, decoded_char):
+        self.lexema += char
+        self.string_value += decoded_char
+        self.advance()
+        return None
+    
+    def accumulate(self, char):
+        self.lexema += char
+        self.advance()
+        return None
+
+    def accumulate_both(self, char):
+        self.lexema += char
+        self.string_value += char
+        self.advance()
+        return None
+    
+    
+    def define_id(self, char):
+        kind = self.keywords.get(self.lexema, TokenKind.IDENTIFIER)
+        val = None
+        if kind == TokenKind.KW_TRUE:
+            val = True
+        elif kind == TokenKind.KW_FALSE:
+            val = False
+            
+        if kind == TokenKind.IDENTIFIER:
+            val = self.lexema
+        return Token(kind, self.lexema, val, self.start_line, self.start_column)
+
+    
+    def define_int(self, char):
+        return Token(TokenKind.INT_LITERAL, self.lexema, int(self.lexema), self.start_line, self.start_column)
+
+    def define_string(self, char):
+        self.lexema += char
+        self.advance()
+        return Token(TokenKind.STRING_LITERAL, self.lexema, self.string_value, self.start_line, self.start_column)
 
     def one_char_transition(self, char, tokenKind):
-        # return Token(tokenKind, )
-        return char
+        self.start_line, self.start_column = self.line, self.column
+        self.advance()
+        return Token(tokenKind, char, None, self.start_line, self.start_column)
 
     def double_char_transition(self, char, tokenKind):
-        if tokenKind != None:
-            print('dc', char, tokenKind)
-            print(char)
+        self.lexema += char
+        self.advance()
+        return Token(tokenKind, self.lexema, None, self.start_line, self.start_column)
 
-    def token_content(self, char, tokenKind):
-        if tokenKind != None:
-            print('tc', char, tokenKind)
+    def end_of_file(self, char):
+        return Token(TokenKind.EOF, "", None, self.line, self.column) 
 
+    def unknown_char(self, char):
+        return LexerError(self.line, self.column, "Unknown character: " + char)
 
-    def token_content_string(self, char, tokenKind):
-        if tokenKind != None:
-            print('tcs', char, tokenKind)
-
-
-    def end_of_file(self, char, tokenKind):
-        pass
-
-
-    def unknown_char(self, char, tokenKind):
-        pass
-
-
-    def fallback(self, char, tokenKind):
-        pass
+    def fallback(self, tokenKind):
+        return Token(tokenKind, self.lexema, None, self.start_line, self.start_column)
 
 
     def __init__(self, source: str):
         self.source = source
         self.pos = 0
-
-        # Scape, comentario
+        self.length = len(source)
+        self.line = 1
+        self.column = 1
+        
+        self.state = 'start'
+        self.lexema = ""
+        self.string_value = ""
+        self.start_line = 1
+        self.start_column = 1
+        self.escape_column = 1
+        
+        self.keywords = {
+            'int': TokenKind.KW_INT, 'bool': TokenKind.KW_BOOL, 'void': TokenKind.KW_VOID,
+            'true': TokenKind.KW_TRUE, 'false': TokenKind.KW_FALSE, 'if': TokenKind.KW_IF,
+            'else': TokenKind.KW_ELSE, 'while': TokenKind.KW_WHILE, 'return': TokenKind.KW_RETURN,
+            'print': TokenKind.KW_PRINT
+        }
+        
+        # TODO: Scape, comentario
 
         # Default: transição inváida
-        self.transitions_table = {
+        self.transitions_table = {          # estado: {classe: (proximo estado, acao)}
                 'start': {  
                     # Special chars
-                    'space': ('start', lambda c: self.ignored_char(c, None)),
-                    # 'newline': ('start', lambda c: self.ignored_char(c, None)), # New line não seria \n?
+                    'space': ('start',      self.ignored_char),
+                    'newline': ('start',    self.ignored_char), # New line não seria \n?
 
                     # Individual char
                     '(': ('start',      lambda c: self.one_char_transition(c, TokenKind.LEFT_PAREN)),
@@ -174,21 +219,22 @@ class Lexer:
                     ';': ('start',      lambda c: self.one_char_transition(c, TokenKind.SEMICOLON)),
 
                     # Double char
-                    '>': ('greater',    lambda c: self.double_char_transition(c, TokenKind.GREATER)),
-                    '<': ('less',       lambda c: self.double_char_transition(c, TokenKind.LESS)),
-                    '=': ('equal',      lambda c: self.double_char_transition(c, TokenKind.ASSIGN)),
-                    '!': ('not',        lambda c: self.double_char_transition(c, TokenKind.LOGICAL_NOT)),
-                    '|': ('or',         lambda c: self.double_char_transition(c, TokenKind.LOGICAL_OR)),
-                    '&': ('and',        lambda c: self.double_char_transition(c, TokenKind.LOGICAL_AND)),
+                    '>': ('greater',    self.token_start),
+                    '<': ('less',       self.token_start),
+                    '=': ('equal',      self.token_start),
+                    '!': ('not',        self.token_start),
+                    '|': ('or',         self.token_start),
+                    '&': ('and',        self.token_start),
+                    
+                    '/': ('slash',      self.token_start),
+                    '"': ('string',     self.start_string),
 
                     # Identifiers
-                    'digit': ('int',    lambda c: self.token_content(c, TokenKind.INT_LITERAL)),
-                    'char': ('char',    lambda c: self.token_content(c, TokenKind.IDENTIFIER)), # Validate if is char or _
-                    '"': ('string',     lambda c: self.token_content_string(c, TokenKind.STRING_LITERAL)),
-                    '/': ('slash',      lambda c: self.token_content(c, TokenKind.SLASH)), # !!!! como apagar comentario
+                    'digit': ('int',        self.token_start),
+                    'char': ('id',          self.token_start), # Validate if is char or _
                     
-                    None: ('eof',      lambda c: self.end_of_file(c, TokenKind.EOF)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'eof': ('end',          self.end_of_file),
+                    'default': ('error',    self.unknown_char)
                 },
                 
                 'slash': {
@@ -196,26 +242,23 @@ class Lexer:
                     # '*': ('block_comment', lambda c: self.ignored_char(c, None)),
                     'default': ('start', lambda c: self.fallback(c, TokenKind.SLASH)) # nao consumir no fallback
                 },
-                # 'slash': {
-                #     '/': ('line_comment', lambda c: self.ignored_char(c, None)),
-                #     '*': ('block_comment', lambda c: self.ignored_char(c, None)),
-                #     'default': ('start', lambda c: self.fallback(c, TokenKind.SLASH)) # nao consumir no fallback
-                # },
+                
+                # Operadores compostos (maior prefixo)
                 'greater': {
                     '=': ('start',      lambda c: self.double_char_transition(c, TokenKind.GREATER_EQUAL)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'default': ('start',lambda c: self.fallback(TokenKind.GREATER))
                 },
                 'less': {
                     '=': ('start',      lambda c: self.double_char_transition(c, TokenKind.LESS_EQUAL)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'default': ('start',lambda c: self.fallback(TokenKind.LESS))
                 },
                 'equal': {
                     '=': ('start',      lambda c: self.double_char_transition(c, TokenKind.EQUAL_EQUAL)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'default': ('start',lambda c: self.fallback(TokenKind.ASSIGN))
                 },
                 'not': {
                     '=': ('start',      lambda c: self.double_char_transition(c, TokenKind.NOT_EQUAL)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'default': ('start',lambda c: self.fallback(TokenKind.NOT))
                 },
                 'or': {
                     '|': ('start',      lambda c: self.double_char_transition(c, TokenKind.LOGICAL_OR)),
@@ -225,76 +268,60 @@ class Lexer:
                     '&': ('start',      lambda c: self.double_char_transition(c, TokenKind.LOGICAL_AND)),
                     'default': ('error',lambda c: self.unknown_char(c))
                 },
+                
+                
                 'int': {
-                    'digit': ('int',    lambda c: self.token_content(c, TokenKind.INT_LITERAL)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                    'digit': ('int',            self.accumulate),
+                    'default': ('start',        self.define_int)
                 },
-                'char': {
-                    'digit': ('char',   lambda c: self.token_content(c, TokenKind.IDENTIFIER)),
-                    'char': ('char',    lambda c: self.token_content(c, TokenKind.IDENTIFIER)),
-                    'default': ('error',lambda c: self.unknown_char(c))
+                'id': {
+                    'digit': ('id',             self.accumulate),
+                    'char': ('id',              self.accumulate),
+                    'default': ('start',        self.define_id)
                 },
+                
+                
                 'string': {
-                    # '(': ('string',     lambda c: self.token_content_string(c, None)),
-                    # ')': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '{': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '}': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '%': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '+': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '-': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '*': ('string',     lambda c: self.token_content_string(c, None)),
-                    # ',': ('string',     lambda c: self.token_content_string(c, None)),
-                    # ';': ('string',     lambda c: self.token_content_string(c, None)),
-
-                    # '>': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '<': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '=': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '!': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '|': ('string',     lambda c: self.token_content_string(c, None)),
-                    # '&': ('string',     lambda c: self.token_content_string(c, None)),
-
-                    # 'digit': ('string', lambda c: self.token_content_string(c, None)),
-                    # 'char': ('string',  lambda c: self.token_content_string(c, None)),
-                    # '/': ('string',     lambda c: self.token_content_string(c, None)),
-
-                    # Se for alphanumerico aceita
-                    '"': ('start',      lambda c: self.token_content_string(c, TokenKind.STRING_LITERAL)),
+                    '"': ('start',              self.define_string),
+                    '\\': ('string_escape',     self.start_string_escape),
+                    'newline': ('error',        self.unknown_char),
+                    'eof': ('error',            self.unknown_char),
+                    'default': ('string',       self.accumulate_both)
                 },
-                'eof': {},
-                'error': {}
+                'string_escape': {
+                    'n': ('string',             lambda c: self.escape_char(c, '\n')),
+                    't': ('string',             lambda c: self.escape_char(c, '\t')),
+                    '"': ('string',             lambda c: self.escape_char(c, '"')),
+                    '\\': ('string',            lambda c: self.escape_char(c, '\\')),
+                    'eof': ('error',            self.unknown_char),
+                    'default': ('error',        self.unknown_char)
+                },
             }
 
+    def peek(self) -> str:
+        """Retorna caractere sem consumi-lo, ou None se EOF."""
+        if self.pos >= self.length:
+            return '\0'
+        return self.source[self.pos]
 
-        self.state = 'start'
-        # TODO: inicialize aqui o estado exigido por sua estratégia.
-        # Percorre digitos:
-        # Enquanto state != EOF
-        #     dig = peek()
-        #     se ischar(dig):
-        #         key = char
-        #     se nao isdig(dig):
-        #         key = dig
-
-        #     new_state = self.transition_table[state][key]
-        #     se new_state != undefined:
-        #           # Adiciona o ultimo token lido na lista
-        #     se nao:
-        #         state = start
-        #       advance()
-
-    def peek(self) -> str | None:
-        """Retorna o próximo caractere sem consumi-lo, ou None se EOF."""
-        if self.pos < len(self.source):
-            return self.source[self.pos]
-        return None
-
-    def advance(self) -> str | None:
-        """Consume o próximo caractere e retorna-o, ou None se EOF."""
+    def advance(self):
+        """Consume o próximo caractere"""
         if self.pos < len(self.source):
             char = self.source[self.pos]
             self.pos += 1
-            return char
-        return None
+            if char == '\n':
+                self.line += 1
+                self.column = 1
+            else:
+                self.column += 1
+                
+    def char_class(self, char: str) -> str:
+        if char == '\0': return 'eof'
+        if char == '\n': return 'newline'
+        if char.isspace(): return 'space'
+        if char.isdigit(): return 'digit'
+        if char.isalpha() or char == '_': return 'char'
+        return char
 
     def tokens(self) -> Iterator[Token]:
         """Produza todos os tokens significativos e um único EOF ao final."""
@@ -340,4 +367,28 @@ class Lexer:
         yield  # mantém este método como gerador durante o desenvolvimento
 
     def scan(self) -> list[Token]:
-        return list(self.tokens())
+        tokens = []
+        
+        while self.state != 'end':
+            char = self.peek()
+            
+            if char != '\0' and ord(char) > 127:
+                raise LexerError("Caractere nao ascii", self.line, self.column)
+            
+            c_class = self.char_class(char)
+            state_transition = self.transitions_table[self.state]
+            
+            if c_class in state_transition:
+                next_state, action = state_transition[c_class]
+            elif 'default' in state_transition:
+                next_state, action = state_transition['default']
+            else:
+                raise LexerError("Transição não encontrada", self.line, self.column)
+            
+            token = action(char)
+            self.state = next_state
+            
+            if token:
+                tokens.append(token)
+                
+        return tokens

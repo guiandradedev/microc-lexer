@@ -1,0 +1,8 @@
+int main() {
+    int valor = 42;
+    mostrar(valor, true);
+
+    print("Hello, World!");
+
+    return 0;
+}
