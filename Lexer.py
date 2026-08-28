@@ -78,57 +78,48 @@ class LexerError(Exception):
 class Lexer:
     """Converte texto-fonte MicroC em uma sequência de tokens."""
 
-    """ transition_table = {
-        "estado": {
-            "caractere": {
-                "next_state": "novo_estado",
-            }
-        },
-        "novo_estado": {
-            "caractere": {
-                "next_state": "novo_estado",
-                "token": TokenKind.IDENTIFIER  # Se existir atributo token, é final; caso contrário é intermediario
-            }
-        }
-    } """
-    
-    
-
     def ignored_char(self, char):
+        """Descarta espaços, quebras de linha e caracteres de comentários."""
         if char != '\0':
             self.advance()
             return None
     
     def token_start(self, char):
+        """Inicia um lexema simples e consome seu primeiro caractere."""
         self.start_line, self.start_column = self.line, self.column
         self.lexema = char
         self.advance()
         return None
         
     def start_string(self, char):
+        """Inicia uma string, preservando as aspas no lexema."""
         self.start_line, self.start_column = self.line, self.column
         self.lexema, self.string_value = char, ""
         self.advance()
         return None
     
     def start_string_escape(self, char):
+        """Registra a barra invertida e guarda a posição do escape."""
         self.escape_column = self.column
         self.lexema += char
         self.advance()
         return None
     
     def escape_char(self, char, decoded_char):
+        """Adiciona ao lexema o escape e ao valor seu caractere decodificado."""
         self.lexema += char
         self.string_value += decoded_char
         self.advance()
         return None
     
     def accumulate(self, char):
+        """Acumula um caractere em identificadores ou inteiros."""
         self.lexema += char
         self.advance()
         return None
 
     def accumulate_both(self, char):
+        """Acumula o caractere bruto e o valor decodificado da string."""
         self.lexema += char
         self.string_value += char
         self.advance()
@@ -136,6 +127,7 @@ class Lexer:
     
     
     def define_id(self, char):
+        """Finaliza identificadores e converte palavras reservadas."""
         kind = self.keywords.get(self.lexema, TokenKind.IDENTIFIER)
         val = None
         if kind == TokenKind.KW_TRUE:
@@ -147,32 +139,38 @@ class Lexer:
             val = self.lexema
         return Token(kind, self.lexema, val, self.start_line, self.start_column)
 
-    
     def define_int(self, char):
+        """Finaliza um inteiro sem consumir o caractere seguinte."""
         return Token(TokenKind.INT_LITERAL, self.lexema, int(self.lexema), self.start_line, self.start_column)
 
     def define_string(self, char):
+        """Fecha a string, incluindo a aspa final no lexema."""
         self.lexema += char
         self.advance()
         return Token(TokenKind.STRING_LITERAL, self.lexema, self.string_value, self.start_line, self.start_column)
 
     def one_char_transition(self, char, tokenKind):
+        """Produz um token de um caractere e avança a entrada."""
         self.start_line, self.start_column = self.line, self.column
         self.advance()
         return Token(tokenKind, char, None, self.start_line, self.start_column)
 
     def double_char_transition(self, char, tokenKind):
+        """Completa operadores de dois caracteres, como ``<=`` ou ``&&``."""
         self.lexema += char
         self.advance()
         return Token(tokenKind, self.lexema, None, self.start_line, self.start_column)
 
     def end_of_file(self, char):
+        """Produz o único token EOF, sem alterar a posição da entrada."""
         return Token(TokenKind.EOF, "", None, self.line, self.column) 
 
     def fallback(self, tokenKind):
+        """Finaliza um operador de um caractere sem consumir o próximo."""
         return Token(tokenKind, self.lexema, None, self.start_line, self.start_column)
     
-    
+
+    # --- Erros ---
     def err_unknown_char(self, char):
         raise LexerError(f"Unknown character: {char}", self.line, self.column)
     
@@ -212,16 +210,17 @@ class Lexer:
             'print': TokenKind.KW_PRINT
         }
         
-        # TODO: Scape, comentario
-
-        # Default: transição inváida
-        self.transitions_table = {          # estado: {classe: (proximo estado, acao)}
+        # Cada entrada tem o formato:
+        # estado: {símbolo ou classe: (próximo estado, ação)}.
+        # As ações normalmente consomem o caractere; as ações ``fallback``
+        # apenas finalizam o token para que o mesmo caractere seja reavaliado.
+        self.transitions_table = {
                 'start': {  
-                    # Special chars
+                # Espaços e quebras de linha não geram tokens.
                     'space': ('start',      self.ignored_char),
                     'newline': ('start',    self.ignored_char),
 
-                    # Individual char
+                # Símbolos que formam tokens sozinhos.
                     '(': ('start',      lambda c: self.one_char_transition(c, TokenKind.LEFT_PAREN)),
                     ')': ('start',      lambda c: self.one_char_transition(c, TokenKind.RIGHT_PAREN)),
                     '{': ('start',      lambda c: self.one_char_transition(c, TokenKind.LEFT_BRACE)),
@@ -233,7 +232,7 @@ class Lexer:
                     ',': ('start',      lambda c: self.one_char_transition(c, TokenKind.COMMA)),
                     ';': ('start',      lambda c: self.one_char_transition(c, TokenKind.SEMICOLON)),
 
-                    # Double char
+                    # Prefixos de operadores simples ou compostos.
                     '>': ('greater',    self.token_start),
                     '<': ('less',       self.token_start),
                     '=': ('equal',      self.token_start),
@@ -244,9 +243,10 @@ class Lexer:
                     '/': ('slash',      self.token_start),
                     '"': ('string',     self.start_string),
 
-                    # Identifiers
+                    # Identificadores começam por letra ou sublinhado;
+                    # números começam por um dígito.
                     'digit': ('int',        self.token_start),
-                    'char': ('id',          self.token_start), # Validate if is char or _
+                    'char': ('id',          self.token_start),
                     
                     'eof': ('end',          self.end_of_file),
                     'default': ('error',    self.err_unknown_char)
@@ -258,7 +258,7 @@ class Lexer:
                     'default': ('start', lambda c:  self.fallback(TokenKind.SLASH)) # nao consumir no fallback
                 },
                 
-                # comentarios
+                # Depois de '/', decide-se entre divisão e comentário.
                 'line_comment': {
                     'newline': ('start',            self.ignored_char),
                     'eof': ('start',                self.ignored_char),
@@ -276,7 +276,8 @@ class Lexer:
                     'default': ('block_comment',    self.ignored_char)
                 },
                 
-                # Operadores compostos (maior prefixo)
+                # Estados de operadores compostos: se não houver '=' (ou o
+                # segundo caractere esperado), o operador simples é emitido.
                 'greater': {
                     '=': ('start',      lambda c: self.double_char_transition(c, TokenKind.GREATER_EQUAL)),
                     'default': ('start',lambda c: self.fallback(TokenKind.GREATER))
@@ -303,10 +304,12 @@ class Lexer:
                 },
                 
                 
+                # O estado numérico termina quando encontra algo que não é dígito.
                 'int': {
                     'digit': ('int',            self.accumulate),
                     'default': ('start',        self.define_int)
                 },
+                # Identificadores aceitam letras, sublinhado e dígitos após o início.
                 'id': {
                     'digit': ('id',             self.accumulate),
                     'char': ('id',              self.accumulate),
@@ -314,6 +317,8 @@ class Lexer:
                 },
                 
                 
+                # Strings mantêm duas representações: lexema bruto e valor
+                # decodificado, permitindo preservar escapes na saída.
                 'string': {
                     '"': ('start',              self.define_string),
                     '\\': ('string_escape',     self.start_string_escape),
@@ -359,46 +364,7 @@ class Lexer:
 
     def tokens(self) -> Iterator[Token]:
         """Produza todos os tokens significativos e um único EOF ao final."""
-
-# if transition is None:
-#     transition = self.transitions_table[self.state].get('default')
-
-        # Percorrer o texto
-        while self.pos < len(self.source):
-            symbol = self.peek()
-            if not symbol.isascii():
-                self.state = 'error'
-                break
-
-            key = ""
-            if symbol.isalpha():
-                key = "char"
-            elif symbol.isdigit():
-                key = "digit"
-            elif symbol.isspace():
-                key = "space"
-            else:
-                key = symbol
-
-            if self.state == "string":
-                # Permite qualquer caracter alphanumerico
-                print("a")
-
-            transition = self.transitions_table[self.state].get(key)
-
-            if transition is None:
-                # default_state, default_action = self.transitions_table[self.state]['default']
-                # default_action(symbol)
-                # new_state = default_state
-                print(transition)
-            else:
-                new_state, action = transition
-                action(symbol)
-
-            self.state = new_state
-            self.advance()
-            
-        yield  # mantém este método como gerador durante o desenvolvimento
+    
 
     def scan(self) -> list[Token]:
         tokens = []
